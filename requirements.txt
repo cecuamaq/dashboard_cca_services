@@ -3,7 +3,7 @@ certifi==2026.2.25
 charset-normalizer==3.4.5
 click==8.3.1
 colorama==0.4.6
-dash==2.18.2
+dash==4.0.0
 dash-bootstrap-components==2.0.4
 et_xmlfile==2.0.0
 Flask==3.1.3
