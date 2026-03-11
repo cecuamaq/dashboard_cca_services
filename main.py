@@ -31,6 +31,9 @@ import warnings
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import threading
+from zoneinfo import ZoneInfo
+
+TZ_GYE = ZoneInfo("America/Guayaquil")  # UTC-5, sin horario de verano
 warnings.filterwarnings("ignore")
 
 log = logging.getLogger("werkzeug")
@@ -437,7 +440,7 @@ def reload_data():
     DF_BASE   = process_orders(sheets.get("OrderHeader", pd.DataFrame()))
     DET_BASE  = process_details(sheets.get("OrderDetails", pd.DataFrame()))
     CUST_BASE = sheets.get("Customer", pd.DataFrame())
-    LAST_UPDATE = datetime.now()   # ← timestamp real de fin de carga
+    LAST_UPDATE = datetime.now(TZ_GYE)   # ← timestamp real de fin de carga (Guayaquil)
 
     # ── CIUDAD: leer directamente de OrderHeader si existe ────────
     if "CIUDAD" in DF_BASE.columns:
@@ -1713,7 +1716,7 @@ def initial_data_load(login_success, n_intervals, already_loaded):
 )
 def update_clock(n_clock, _login, login_ts):
     from datetime import datetime
-    now = datetime.now()
+    now = datetime.now(TZ_GYE)
     DIAS  = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
     MESES = ["enero","febrero","marzo","abril","mayo","junio",
              "julio","agosto","septiembre","octubre","noviembre","diciembre"]
@@ -2418,7 +2421,7 @@ def handle_login(n_btn, n_user, n_pass, user, password, login_count, prev_ts):
     password = (password or "").strip()
     if USERS.get(user) == password:
         _preload_done.wait(timeout=0.5)
-        ts = datetime.now().strftime("%d/%m/%Y  %H:%M:%S")
+        ts = datetime.now(TZ_GYE).strftime("%d/%m/%Y  %H:%M:%S")
         return {"display": "none"}, "login-error", (login_count or 0) + 1, ts
     return {}, "login-error show", login_count, prev_ts
 
@@ -3007,5 +3010,3 @@ server = app.server  # expuesto para gunicorn
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8050))
     app.run(host="0.0.0.0", port=port, debug=False)
-
-
