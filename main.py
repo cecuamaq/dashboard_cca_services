@@ -26,7 +26,10 @@ import dash_bootstrap_components as dbc
 import logging
 import json
 import os
+import io
 import warnings
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 warnings.filterwarnings("ignore")
 
 log = logging.getLogger("werkzeug")
@@ -256,15 +259,48 @@ PLOTLY_THEME = dict(
 )
 
 
-def load_sheet(sheet_name: str) -> pd.DataFrame:
+def _download_workbook_bytes() -> bytes:
+    """Descarga el XLSX completo una sola vez y devuelve los bytes en memoria."""
+    req = urllib.request.Request(BASE_URL, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return resp.read()
+
+
+def load_all_sheets(sheet_names: list[str]) -> dict[str, pd.DataFrame]:
+    """
+    Descarga el XLSX una única vez y lee todas las hojas en paralelo.
+    Devuelve un dict {sheet_name: DataFrame}.
+    """
+    print("[INFO] Descargando workbook (una sola petición)...")
     try:
-        url = f"{BASE_URL}&sheet={sheet_name}"
-        df  = pd.read_excel(url, sheet_name=sheet_name)
-        df.columns = [str(c).strip() for c in df.columns]
-        return df
+        raw_bytes = _download_workbook_bytes()
     except Exception as e:
-        print(f"[ERROR] Hoja '{sheet_name}': {e}")
-        return pd.DataFrame()
+        print(f"[ERROR] No se pudo descargar el workbook: {e}")
+        return {name: pd.DataFrame() for name in sheet_names}
+
+    def _read_sheet(name: str) -> tuple[str, pd.DataFrame]:
+        try:
+            df = pd.read_excel(
+                io.BytesIO(raw_bytes),
+                sheet_name=name,
+                engine="openpyxl",
+            )
+            df.columns = [str(c).strip() for c in df.columns]
+            print(f"[INFO] Hoja '{name}': {len(df)} filas leídas")
+            return name, df
+        except Exception as e:
+            print(f"[ERROR] Hoja '{name}': {e}")
+            return name, pd.DataFrame()
+
+    with ThreadPoolExecutor(max_workers=len(sheet_names)) as pool:
+        results = pool.map(_read_sheet, sheet_names)
+
+    return dict(results)
+
+
+def load_sheet(sheet_name: str) -> pd.DataFrame:
+    """Compatibilidad: descarga solo la hoja solicitada (uso individual)."""
+    return load_all_sheets([sheet_name]).get(sheet_name, pd.DataFrame())
 
 
 def process_orders(raw: pd.DataFrame) -> pd.DataFrame:
@@ -359,9 +395,12 @@ DRIVE_INDEX = _load_drive_index()
 
 def reload_data():
     global DF_BASE, DET_BASE, CUST_BASE
-    DF_BASE   = process_orders(load_sheet("OrderHeader"))
-    DET_BASE  = process_details(load_sheet("OrderDetails"))
-    CUST_BASE = load_sheet("Customer")
+
+    # ── UNA sola descarga para las tres hojas ─────────────────────
+    sheets = load_all_sheets(["OrderHeader", "OrderDetails", "Customer"])
+    DF_BASE   = process_orders(sheets.get("OrderHeader", pd.DataFrame()))
+    DET_BASE  = process_details(sheets.get("OrderDetails", pd.DataFrame()))
+    CUST_BASE = sheets.get("Customer", pd.DataFrame())
 
     # ── CIUDAD: leer directamente de OrderHeader si existe ────────
     if "CIUDAD" in DF_BASE.columns:
