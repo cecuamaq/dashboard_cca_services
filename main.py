@@ -30,6 +30,7 @@ import io
 import warnings
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+import threading
 warnings.filterwarnings("ignore")
 
 log = logging.getLogger("werkzeug")
@@ -83,23 +84,29 @@ C = {
 }
 
 STATUS_COLORS = {
-    "PENDIENTE":     C["orange"],
-    "DIAGNÓSTICO":   C["teal"],
-    "EN APROBACIÓN": C["yellow"],
-    "EN EJECUCIÓN":  C["blue"],
-    "FINALIZADO":    C["purple"],
-    "ENTREGADO":     C["green"],
-    "FACTURADO":     C["blue_dark"],
+    "PENDIENTE":       C["orange"],
+    "DIAGNÓSTICO":     C["teal"],
+    "EN APROBACIÓN":   C["yellow"],
+    "NO APROBADO":     C["red"],
+    "EN IMPORTACIÓN":  C["purple"],
+    "EN EJECUCIÓN":    C["blue"],
+    "FINALIZADO":      C["purple"],
+    "ENTREGADO":       C["green"],
+    "FACTURADO":       C["blue_dark"],
+    "DE BAJA":         C["gray"],
 }
 
 STATUS_BG = {
-    "PENDIENTE":     "#FFF0E6",
-    "DIAGNÓSTICO":   "#E0F7FA",
-    "EN APROBACIÓN": "#FFFDE7",
-    "EN EJECUCIÓN":  "#EFF6FC",
-    "FINALIZADO":    "#F4EFF9",
-    "ENTREGADO":     "#DFF6DD",
-    "FACTURADO":     "#E3F0FF",
+    "PENDIENTE":       "#FFF0E6",
+    "DIAGNÓSTICO":     "#E0F7FA",
+    "EN APROBACIÓN":   "#FFFDE7",
+    "NO APROBADO":     "#FDE7E9",
+    "EN IMPORTACIÓN":  "#F4EFF9",
+    "EN EJECUCIÓN":    "#EFF6FC",
+    "FINALIZADO":      "#F4EFF9",
+    "ENTREGADO":       "#DFF6DD",
+    "FACTURADO":       "#E3F0FF",
+    "DE BAJA":         "#F3F2F1",
 }
 
 # Estados considerados "atendidos" para el cálculo del IAC
@@ -332,12 +339,16 @@ def process_orders(raw: pd.DataFrame) -> pd.DataFrame:
         import unicodedata as _ud
         # Tabla de normalización: versiones sin tilde → forma canónica con tilde
         _ESTADO_MAP = {
-            "DIAGNOSTICO":    "DIAGNÓSTICO",
-            "DIAGN\u00d3STICO": "DIAGNÓSTICO",   # ya correcto, por si acaso
-            "EN APROBACION":  "EN APROBACIÓN",
-            "EN EJECUCION":   "EN EJECUCIÓN",
-            "FACTURACION":    "FACTURADO",
-            "EN PROCESO":     "EN EJECUCIÓN",     # alias legado → nuevo nombre
+            "DIAGNOSTICO":       "DIAGNÓSTICO",
+            "DIAGN\u00d3STICO":  "DIAGNÓSTICO",    # ya correcto, por si acaso
+            "EN APROBACION":     "EN APROBACIÓN",
+            "NO APROBADO":       "NO APROBADO",
+            "EN IMPORTACION":    "EN IMPORTACIÓN",
+            "EN IMPORTACIÓN": "EN IMPORTACIÓN",
+            "DE BAJA":           "DE BAJA",
+            "EN EJECUCION":      "EN EJECUCIÓN",
+            "FACTURACION":       "FACTURADO",
+            "EN PROCESO":        "EN EJECUCIÓN",    # alias legado → nuevo nombre
         }
         def _norm_estado(val):
             s = str(val).strip().upper()
@@ -391,6 +402,30 @@ def _load_drive_index():
     return {}
 
 DRIVE_INDEX = _load_drive_index()
+
+# ══════════════════════════════════════════════════════════════════
+# PRE-CARGA EN BACKGROUND
+# Inicia la descarga de Google Sheets en un hilo separado apenas
+# arranca el servidor, para que los datos estén listos cuando el
+# usuario termine de loguearse.
+# ══════════════════════════════════════════════════════════════════
+_preload_done  = threading.Event()   # señal: precarga terminada
+_preload_error = None                # guarda excepción si falla
+
+def _background_preload():
+    global _preload_error
+    try:
+        print("[INFO] Pre-carga background iniciada...")
+        reload_data()
+        print(f"[INFO] Pre-carga completada: {len(DF_BASE)} órdenes · {len(DET_BASE)} equipos")
+    except Exception as e:
+        _preload_error = e
+        print(f"[WARN] Pre-carga falló: {e}")
+    finally:
+        _preload_done.set()
+
+_preload_thread = threading.Thread(target=_background_preload, daemon=True)
+_preload_thread.start()
 
 
 def reload_data():
@@ -1480,11 +1515,11 @@ LOGIN_LAYOUT = html.Div([
         html.Div([
             html.Span("Usuario", className="login-label"),
             dcc.Input(id="login-user", type="text", placeholder="Ingrese su usuario",
-                      className="login-input", debounce=False,
+                      className="login-input", debounce=False, n_submit=0,
                       style={"display":"block"}),
             html.Span("Contraseña", className="login-label"),
             dcc.Input(id="login-pass", type="password", placeholder="Ingrese su contraseña",
-                      className="login-input", debounce=False,
+                      className="login-input", debounce=False, n_submit=0,
                       style={"display":"block"}),
             html.Div("Usuario o contraseña incorrectos.", id="login-error", className="login-error"),
             html.Button("INGRESAR AL DASHBOARD", id="login-btn", n_clicks=0, className="login-btn"),
@@ -1541,6 +1576,7 @@ app.index_string = f"""<!DOCTYPE html>
 app.layout = html.Div([LOGIN_LAYOUT, build_layout(), MODAL,
     dcc.Store(id="mapa-fs-store", data=0),
     dcc.Store(id="data-loaded-store", data=False),
+    dcc.Store(id="login-success-store", data=0),
 ])
 
 # ══════════════════════════════════════════════════════════════════
@@ -1599,17 +1635,36 @@ def filter_det(dff):
     Output("filter-cliente", "options", allow_duplicate=True),
     Output("filter-fechas",  "min_date_allowed", allow_duplicate=True),
     Output("filter-fechas",  "max_date_allowed", allow_duplicate=True),
-    Input("interval-refresh",  "n_intervals"),
-    State("data-loaded-store", "data"),
+    Input("login-success-store", "data"),
+    Input("interval-refresh",    "n_intervals"),
+    State("data-loaded-store",   "data"),
     prevent_initial_call="initial_duplicate",
 )
-def initial_data_load(n_intervals, already_loaded):
-    try:
-        reload_data()
-        status = "recarga" if already_loaded else "inicial"
-        print(f"[INFO] Carga {status}: {len(DF_BASE)} órdenes · {len(DET_BASE)} equipos")
-    except Exception as e:
-        print(f"[ERROR] reload_data: {e}")
+def initial_data_load(login_success, n_intervals, already_loaded):
+    from dash import ctx
+    triggered = ctx.triggered_id if ctx.triggered_id else ""
+
+    if triggered == "login-success-store":
+        # Login acaba de ocurrir: si la precarga background terminó, los datos
+        # ya están en memoria; si no, esperar hasta 8 s antes de recargar.
+        if not _preload_done.is_set():
+            _preload_done.wait(timeout=8)
+        if DF_BASE.empty:
+            # Precarga falló o aún no completó — forzar carga sincrónica
+            try:
+                reload_data()
+            except Exception as e:
+                print(f"[ERROR] reload_data en login: {e}")
+        else:
+            print(f"[INFO] Login — datos ya en memoria: {len(DF_BASE)} órdenes")
+    else:
+        # Intervalo de auto-refresh: siempre recargar
+        try:
+            reload_data()
+            status = "recarga" if already_loaded else "inicial"
+            print(f"[INFO] Carga {status}: {len(DF_BASE)} órdenes · {len(DET_BASE)} equipos")
+        except Exception as e:
+            print(f"[ERROR] reload_data: {e}")
 
     tipos    = ["Todos"] + sorted(DF_BASE["TIPO DE ORDEN"].dropna().unique().tolist()) \
         if "TIPO DE ORDEN" in DF_BASE.columns else ["Todos"]
@@ -1870,7 +1925,12 @@ def fig_tec_estado(tipo, estado, tecnico, cliente, start, end, *_):
     if grp.empty:
         return empty_fig()
     fig = go.Figure()
-    for est, col in STATUS_COLORS.items():
+    # Combinar colores conocidos + cualquier estado nuevo en los datos
+    all_estados = list(STATUS_COLORS.keys()) + [
+        e for e in grp["ESTADO_ORDEN"].unique() if e not in STATUS_COLORS
+    ]
+    for est in all_estados:
+        col = STATUS_COLORS.get(est, C["gray"])
         sub = grp[grp["ESTADO_ORDEN"] == est]
         if not sub.empty:
             fig.add_trace(go.Bar(
@@ -2302,19 +2362,25 @@ def update_tabla(tipo, estado, tecnico, cliente, start, end, *args):
 # CALLBACK — LOGIN
 # ══════════════════════════════════════════════════════════════════
 @app.callback(
-    Output("login-overlay", "style"),
-    Output("login-error",   "className"),
-    Input("login-btn",      "n_clicks"),
-    State("login-user",     "value"),
-    State("login-pass",     "value"),
+    Output("login-overlay",       "style"),
+    Output("login-error",         "className"),
+    Output("login-success-store", "data"),
+    Input("login-btn",  "n_clicks"),
+    Input("login-user", "n_submit"),
+    Input("login-pass", "n_submit"),
+    State("login-user", "value"),
+    State("login-pass", "value"),
+    State("login-success-store", "data"),
     prevent_initial_call=True,
 )
-def handle_login(n, user, password):
-    user = (user or "").strip().lower()
+def handle_login(n_btn, n_user, n_pass, user, password, login_count):
+    user     = (user     or "").strip().lower()
     password = (password or "").strip()
     if USERS.get(user) == password:
-        return {"display": "none"}, "login-error"
-    return {}, "login-error show"
+        # Esperar a que la precarga en background esté lista (máx 0.5 s)
+        _preload_done.wait(timeout=0.5)
+        return {"display": "none"}, "login-error", (login_count or 0) + 1
+    return {}, "login-error show", login_count
 
 
 
