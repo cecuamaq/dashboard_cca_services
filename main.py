@@ -429,13 +429,15 @@ _preload_thread.start()
 
 
 def reload_data():
-    global DF_BASE, DET_BASE, CUST_BASE
+    global DF_BASE, DET_BASE, CUST_BASE, LAST_UPDATE
+    from datetime import datetime
 
     # ── UNA sola descarga para las tres hojas ─────────────────────
     sheets = load_all_sheets(["OrderHeader", "OrderDetails", "Customer"])
     DF_BASE   = process_orders(sheets.get("OrderHeader", pd.DataFrame()))
     DET_BASE  = process_details(sheets.get("OrderDetails", pd.DataFrame()))
     CUST_BASE = sheets.get("Customer", pd.DataFrame())
+    LAST_UPDATE = datetime.now()   # ← timestamp real de fin de carga
 
     # ── CIUDAD: leer directamente de OrderHeader si existe ────────
     if "CIUDAD" in DF_BASE.columns:
@@ -480,9 +482,10 @@ def reload_data():
 
     print(f"[INFO] CIUDAD_CLIENTE — {DF_BASE['CIUDAD_CLIENTE'].notna().sum()} registros con ciudad")
 
-DF_BASE   = pd.DataFrame()
-DET_BASE  = pd.DataFrame()
-CUST_BASE = pd.DataFrame()
+DF_BASE      = pd.DataFrame()
+DET_BASE     = pd.DataFrame()
+CUST_BASE    = pd.DataFrame()
+LAST_UPDATE  = None   # datetime de la última carga exitosa de Google Sheets
 print("[INFO] Servidor listo — los datos se cargarán desde el navegador del cliente")
 
 # ══════════════════════════════════════════════════════════════════
@@ -1728,7 +1731,10 @@ def update_clock_and_filters(n_intervals, n_clicks):
 
     now   = datetime.now()
     fecha = now.strftime("%A, %d %B %Y  —  %H:%M:%S")
-    upd   = f"🔄 Última actualización: {now.strftime('%d/%m/%Y  %H:%M:%S')}"
+    if LAST_UPDATE is not None:
+        upd = f"🔄 Última actualización: {LAST_UPDATE.strftime('%d/%m/%Y  %H:%M:%S')}"
+    else:
+        upd = "🔄 Última actualización: —"
 
     # Reconstruir opciones de filtros con datos frescos
     tipos    = ["Todos"] + sorted(DF_BASE["TIPO DE ORDEN"].dropna().unique().tolist())                if "TIPO DE ORDEN" in DF_BASE.columns else ["Todos"]
