@@ -409,8 +409,7 @@ def reload_data():
 DF_BASE   = pd.DataFrame()
 DET_BASE  = pd.DataFrame()
 CUST_BASE = pd.DataFrame()
-reload_data()
-print(f"[INFO] {len(DF_BASE)} órdenes · {len(DET_BASE)} equipos · {len(CUST_BASE)} clientes cargados")
+print("[INFO] Servidor listo — los datos se cargarán desde el navegador del cliente")
 
 # ══════════════════════════════════════════════════════════════════
 # CSS GLOBAL — ESTILO POWER BI
@@ -898,6 +897,20 @@ body {{
     font-size: 12px;
     font-weight: 600;
 }}
+
+/* ── Spinner de carga inicial ── */
+@keyframes spin {{
+    0%   {{ transform: rotate(0deg); }}
+    100% {{ transform: rotate(360deg); }}
+}}
+.loading-spinner {{
+    width: 52px; height: 52px;
+    border: 5px solid {C['blue_light']};
+    border-top: 5px solid {C['blue']};
+    border-radius: 50%;
+    animation: spin 0.85s linear infinite;
+    margin: 0 auto 24px;
+}}
 """
 
 # ══════════════════════════════════════════════════════════════════
@@ -1210,6 +1223,31 @@ def build_layout():
             # Contenido con padding
             html.Div([
 
+                # ── Pantalla de carga ──────────────────────────────────
+                html.Div(id="loading-screen", children=[
+                    html.Div([
+                        html.Div([
+                            html.Div(className="loading-spinner"),
+                            html.Div("Cargando datos desde Google Sheets…", style={
+                                "fontSize": "16px", "fontWeight": "600", "color": C["text"],
+                                "marginBottom": "8px", "fontFamily": "Segoe UI, sans-serif",
+                            }),
+                            html.Div("Conectando con la hoja de cálculo, esto puede tardar unos segundos.", style={
+                                "fontSize": "13px", "color": C["text_dim"],
+                                "fontFamily": "Segoe UI, sans-serif",
+                            }),
+                        ], style={
+                            "background": "white", "padding": "48px 60px", "borderRadius": "12px",
+                            "textAlign": "center", "boxShadow": "0 4px 24px rgba(0,0,0,0.10)",
+                            "border": f"1px solid {C['border']}",
+                        }),
+                    ], style={"display": "flex", "alignItems": "center",
+                              "justifyContent": "center", "minHeight": "60vh"}),
+                ], style={"display": "block"}),
+
+                # ── Dashboard (oculto hasta que carguen los datos) ─────────────
+                html.Div(id="dashboard-content", style={"display": "none"}, children=[
+
                 # ── KPIs ──────────────────────────────────────────
                 section_header("Indicadores Clave"),
                 html.Div([
@@ -1382,6 +1420,8 @@ def build_layout():
                     "marginBottom": "20px",
                 }),
 
+                ]),  # cierre dashboard-content
+
             ], style={"padding": "16px 24px"}),
 
         ], style={"marginLeft": "230px", "minHeight": "100vh", "background": C["bg"]}),
@@ -1461,6 +1501,7 @@ app.index_string = f"""<!DOCTYPE html>
 
 app.layout = html.Div([LOGIN_LAYOUT, build_layout(), MODAL,
     dcc.Store(id="mapa-fs-store", data=0),
+    dcc.Store(id="data-loaded-store", data=False),
 ])
 
 # ══════════════════════════════════════════════════════════════════
@@ -1503,6 +1544,64 @@ def filter_det(dff):
     return DET_BASE[DET_BASE["OT_ID"].isin(dff["OT_ID"])]
 
 # ══════════════════════════════════════════════════════════════════
+# CALLBACK: CARGA INICIAL LAZY
+# Se dispara en el primer tick del interval (browser ya cargó la página).
+# Primera vez: descarga datos de Google Sheets y muestra el dashboard.
+# Veces siguientes: recarga silenciosa cada 5 min.
+# ══════════════════════════════════════════════════════════════════
+
+@app.callback(
+    Output("loading-screen",    "style"),
+    Output("dashboard-content", "style"),
+    Output("data-loaded-store", "data"),
+    Output("filter-tipo",    "options", allow_duplicate=True),
+    Output("filter-estado",  "options", allow_duplicate=True),
+    Output("filter-tecnico", "options", allow_duplicate=True),
+    Output("filter-cliente", "options", allow_duplicate=True),
+    Output("filter-fechas",  "min_date_allowed", allow_duplicate=True),
+    Output("filter-fechas",  "max_date_allowed", allow_duplicate=True),
+    Input("interval-refresh",  "n_intervals"),
+    State("data-loaded-store", "data"),
+    prevent_initial_call="initial_duplicate",
+)
+def initial_data_load(n_intervals, already_loaded):
+    try:
+        reload_data()
+        status = "recarga" if already_loaded else "inicial"
+        print(f"[INFO] Carga {status}: {len(DF_BASE)} órdenes · {len(DET_BASE)} equipos")
+    except Exception as e:
+        print(f"[ERROR] reload_data: {e}")
+
+    tipos    = ["Todos"] + sorted(DF_BASE["TIPO DE ORDEN"].dropna().unique().tolist()) \
+        if "TIPO DE ORDEN" in DF_BASE.columns else ["Todos"]
+    estados  = ["Todos"] + sorted(DF_BASE["ESTADO_ORDEN"].dropna().unique().tolist()) \
+        if "ESTADO_ORDEN" in DF_BASE.columns else ["Todos"]
+    tecnicos = ["Todos"] + sorted(
+        t for t in DF_BASE["TECNICO_PRINCIPAL"].dropna().unique()
+        if t not in ("Nan", "nan")
+    ) if "TECNICO_PRINCIPAL" in DF_BASE.columns else ["Todos"]
+    clientes = ["Todos"] + sorted(
+        str(c) for c in DF_BASE["NOMBRE_CLIENTE"].dropna().unique()
+        if str(c) not in ("nan", "")
+    ) if "NOMBRE_CLIENTE" in DF_BASE.columns else ["Todos"]
+    fmin = DF_BASE["FECHA / HORA CREACIÓN"].min().date().isoformat() \
+        if "FECHA / HORA CREACIÓN" in DF_BASE.columns \
+        and DF_BASE["FECHA / HORA CREACIÓN"].notna().any() else "2026-01-01"
+    fmax = DF_BASE["FECHA / HORA CREACIÓN"].max().date().isoformat() \
+        if "FECHA / HORA CREACIÓN" in DF_BASE.columns \
+        and DF_BASE["FECHA / HORA CREACIÓN"].notna().any() else "2026-12-31"
+    opt = lambda lst: [{"label": v, "value": v} for v in lst]
+
+    return (
+        {"display": "none"},   # ocultar loading-screen
+        {"display": "block"},  # mostrar dashboard-content
+        True,
+        opt(tipos), opt(estados), opt(tecnicos), opt(clientes),
+        fmin, fmax,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
 # CALLBACKS
 # ══════════════════════════════════════════════════════════════════
 
@@ -1524,7 +1623,9 @@ def update_clock_and_filters(n_intervals, n_clicks):
 
     # Recargar datos siempre que sea el botón o el primer disparo del intervalo
     triggered = ctx.triggered_id if ctx.triggered_id else ""
-    if triggered == "btn-refresh" or n_intervals:
+    # Solo recarga cuando el usuario presiona el botón manualmente
+    # (el interval ya lo maneja el callback initial_data_load)
+    if triggered == "btn-refresh" and n_clicks:
         try:
             reload_data()
             print("[INFO] Datos recargados desde Google Sheets")
@@ -2756,7 +2857,7 @@ def serve_pdf(filename):
     return send_from_directory(PDF_FOLDER, filename, mimetype="application/pdf")
 
 
-server = app.server
+server = app.server  # expuesto para gunicorn
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8050))
