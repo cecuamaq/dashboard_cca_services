@@ -1230,6 +1230,7 @@ def build_sidebar():
         ], style={"padding": "0 20px 20px", "marginTop": "auto"}),
 
         dcc.Interval(id="interval-refresh", interval=300_000, n_intervals=0),
+        dcc.Interval(id="interval-clock",   interval=1_000,   n_intervals=0),
 
     ], style={
         "width":      "230px",
@@ -1705,6 +1706,25 @@ def initial_data_load(login_success, n_intervals, already_loaded):
 @app.callback(
     Output("header-datetime",    "children"),
     Output("header-last-update", "children"),
+    Input("interval-clock",   "n_intervals"),
+    Input("login-success-store", "data"),
+)
+def update_clock(n_clock, _login):
+    from datetime import datetime
+    now   = datetime.now()
+    # Día en español
+    DIAS = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
+    MESES = ["enero","febrero","marzo","abril","mayo","junio",
+             "julio","agosto","septiembre","octubre","noviembre","diciembre"]
+    fecha = f"{DIAS[now.weekday()]}, {now.day:02d} de {MESES[now.month-1]} {now.year}  —  {now.strftime('%H:%M:%S')}"
+    if LAST_UPDATE is not None:
+        upd = f"🔄 Última actualización: {LAST_UPDATE.strftime('%d/%m/%Y  %H:%M:%S')}"
+    else:
+        upd = "🔄 Última actualización: —"
+    return fecha, upd
+
+
+@app.callback(
     Output("filter-tipo",        "options"),
     Output("filter-estado",      "options"),
     Output("filter-tecnico",     "options"),
@@ -1714,14 +1734,10 @@ def initial_data_load(login_success, n_intervals, already_loaded):
     Input("interval-refresh",    "n_intervals"),
     Input("btn-refresh",         "n_clicks"),
 )
-def update_clock_and_filters(n_intervals, n_clicks):
-    from datetime import datetime
+def update_filters(n_intervals, n_clicks):
     from dash import ctx
 
-    # Recargar datos siempre que sea el botón o el primer disparo del intervalo
     triggered = ctx.triggered_id if ctx.triggered_id else ""
-    # Solo recarga cuando el usuario presiona el botón manualmente
-    # (el interval ya lo maneja el callback initial_data_load)
     if triggered == "btn-refresh" and n_clicks:
         try:
             reload_data()
@@ -1729,16 +1745,8 @@ def update_clock_and_filters(n_intervals, n_clicks):
         except Exception as e:
             print(f"[WARN] reload_data: {e}")
 
-    now   = datetime.now()
-    fecha = now.strftime("%A, %d %B %Y  —  %H:%M:%S")
-    if LAST_UPDATE is not None:
-        upd = f"🔄 Última actualización: {LAST_UPDATE.strftime('%d/%m/%Y  %H:%M:%S')}"
-    else:
-        upd = "🔄 Última actualización: —"
-
-    # Reconstruir opciones de filtros con datos frescos
-    tipos    = ["Todos"] + sorted(DF_BASE["TIPO DE ORDEN"].dropna().unique().tolist())                if "TIPO DE ORDEN" in DF_BASE.columns else ["Todos"]
-    estados  = ["Todos"] + sorted(DF_BASE["ESTADO_ORDEN"].dropna().unique().tolist())                if "ESTADO_ORDEN" in DF_BASE.columns else ["Todos"]
+    tipos    = ["Todos"] + sorted(DF_BASE["TIPO DE ORDEN"].dropna().unique().tolist())         if "TIPO DE ORDEN" in DF_BASE.columns else ["Todos"]
+    estados  = ["Todos"] + sorted(DF_BASE["ESTADO_ORDEN"].dropna().unique().tolist())         if "ESTADO_ORDEN" in DF_BASE.columns else ["Todos"]
     tecnicos = ["Todos"] + sorted(
         t for t in DF_BASE["TECNICO_PRINCIPAL"].dropna().unique()
         if t not in ("Nan", "nan")
@@ -1748,11 +1756,11 @@ def update_clock_and_filters(n_intervals, n_clicks):
         if str(c) not in ("nan", "")
     ) if "NOMBRE_CLIENTE" in DF_BASE.columns else ["Todos"]
 
-    fmin = DF_BASE["FECHA / HORA CREACIÓN"].min().date().isoformat()            if "FECHA / HORA CREACIÓN" in DF_BASE.columns and DF_BASE["FECHA / HORA CREACIÓN"].notna().any()            else "2026-01-01"
-    fmax = DF_BASE["FECHA / HORA CREACIÓN"].max().date().isoformat()            if "FECHA / HORA CREACIÓN" in DF_BASE.columns and DF_BASE["FECHA / HORA CREACIÓN"].notna().any()            else "2026-12-31"
+    fmin = DF_BASE["FECHA / HORA CREACIÓN"].min().date().isoformat()         if "FECHA / HORA CREACIÓN" in DF_BASE.columns and DF_BASE["FECHA / HORA CREACIÓN"].notna().any()         else "2026-01-01"
+    fmax = DF_BASE["FECHA / HORA CREACIÓN"].max().date().isoformat()         if "FECHA / HORA CREACIÓN" in DF_BASE.columns and DF_BASE["FECHA / HORA CREACIÓN"].notna().any()         else "2026-12-31"
 
     opt = lambda lst: [{"label": v, "value": v} for v in lst]
-    return fecha, upd, opt(tipos), opt(estados), opt(tecnicos), opt(clientes), fmin, fmax
+    return opt(tipos), opt(estados), opt(tecnicos), opt(clientes), fmin, fmax
 
 
 @app.callback(
