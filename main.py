@@ -1917,29 +1917,51 @@ def fig_tec_estado(tipo, estado, tecnico, cliente, start, end, *_):
     dff = filter_df(tipo, estado, tecnico, cliente, start, end)
     if "TECNICO_PRINCIPAL" not in dff.columns or "ESTADO_ORDEN" not in dff.columns or dff.empty:
         return empty_fig()
-    tec_df = dff[~dff["TECNICO_PRINCIPAL"].isin(["Nan","nan"])].copy()
+
+    # FIX: excluir NaN reales (float) además de strings "Nan"/"nan"
+    tec_df = dff[
+        dff["TECNICO_PRINCIPAL"].notna() &
+        ~dff["TECNICO_PRINCIPAL"].isin(["Nan", "nan", ""])
+    ].copy()
+
+    if tec_df.empty:
+        return empty_fig()
+
+    # FIX: str() para evitar crash si el valor no es string
     tec_df["Apellido"] = tec_df["TECNICO_PRINCIPAL"].apply(
-        lambda x: " ".join(x.split()[-2:]) if len(x.split()) >= 2 else x
+        lambda x: " ".join(str(x).split()[-2:]) if len(str(x).split()) >= 2 else str(x)
     )
-    grp = tec_df.groupby(["Apellido","ESTADO_ORDEN"]).size().reset_index(name="N")
+
+    # Solo los estados presentes en los datos (evita combinaciones vacías)
+    estados_presentes = tec_df["ESTADO_ORDEN"].dropna().unique().tolist()
+    grp = (
+        tec_df.groupby(["Apellido", "ESTADO_ORDEN"], observed=True)
+        .size()
+        .reset_index(name="N")
+    )
     if grp.empty:
         return empty_fig()
+
     fig = go.Figure()
-    # Combinar colores conocidos + cualquier estado nuevo en los datos
-    all_estados = list(STATUS_COLORS.keys()) + [
-        e for e in grp["ESTADO_ORDEN"].unique() if e not in STATUS_COLORS
+    # Respetar el orden de STATUS_COLORS para la leyenda; al final los estados
+    # que no estén en STATUS_COLORS (futuros) se agregan en gris.
+    orden = [e for e in STATUS_COLORS if e in estados_presentes] + [
+        e for e in estados_presentes if e not in STATUS_COLORS
     ]
-    for est in all_estados:
-        col = STATUS_COLORS.get(est, C["gray"])
+    for est in orden:
         sub = grp[grp["ESTADO_ORDEN"] == est]
-        if not sub.empty:
-            fig.add_trace(go.Bar(
-                name=est, x=sub["Apellido"], y=sub["N"],
-                marker_color=col,
-                text=sub["N"], textposition="inside",
-                textfont=dict(color="white", size=12),
-                hovertemplate=f"<b>{est}</b><br>%{{x}}: %{{y}} OT<extra></extra>",
-            ))
+        if sub.empty:
+            continue
+        fig.add_trace(go.Bar(
+            name=est,
+            x=sub["Apellido"],
+            y=sub["N"],
+            marker_color=STATUS_COLORS.get(est, C["gray"]),
+            text=sub["N"],
+            textposition="inside",
+            textfont=dict(color="white", size=12),
+            hovertemplate=f"<b>{est}</b><br>%{{x}}: %{{y}} OT<extra></extra>",
+        ))
     fig.update_layout(
         barmode="stack", xaxis_title="", yaxis_title="",
         xaxis=dict(tickangle=-25, tickfont=dict(size=12)),
