@@ -1103,8 +1103,12 @@ def empty_fig(msg="Sin datos disponibles"):
 def build_sidebar():
     tipos = ["Todos"] + sorted(DF_BASE["TIPO DE ORDEN"].dropna().unique().tolist()) \
         if "TIPO DE ORDEN" in DF_BASE.columns else ["Todos"]
-    estados = ["Todos"] + sorted(DF_BASE["ESTADO_ORDEN"].dropna().unique().tolist()) \
-        if "ESTADO_ORDEN" in DF_BASE.columns else ["Todos"]
+    _ORDEN_EST = ["PENDIENTE", "DIAGNÓSTICO", "EN APROBACIÓN", "NO APROBADO",
+                  "DE BAJA", "EN EJECUCIÓN", "FINALIZADO", "ENTREGADO", "FACTURADO"]
+    _presentes = set(DF_BASE["ESTADO_ORDEN"].dropna().unique().tolist()) \
+        if "ESTADO_ORDEN" in DF_BASE.columns else set()
+    _extras_est = [e for e in _presentes if e not in _ORDEN_EST]
+    estados = ["Todos"] + [e for e in _ORDEN_EST if e in _presentes] + sorted(_extras_est)
     tecnicos = ["Todos"] + sorted(
         t for t in DF_BASE["TECNICO_PRINCIPAL"].dropna().unique()
         if t not in ("Nan", "nan")
@@ -1332,10 +1336,10 @@ def build_layout():
                 # ── KPIs ──────────────────────────────────────────
                 section_header("Indicadores Clave"),
                 html.Div([
-                    # Fila 1: 8 tarjetas de estado
+                    # Fila 1: Total + 9 estados (auto-fit, mín 90 px)
                     html.Div(id="kpi-row-top", style={
                         "display":             "grid",
-                        "gridTemplateColumns": "repeat(8, 1fr)",
+                        "gridTemplateColumns": "repeat(auto-fill, minmax(90px, 1fr))",
                         "gap":                 "6px",
                     }),
                     # Fila 2: 3 métricas de desempeño
@@ -1426,7 +1430,8 @@ def build_layout():
                                 dcc.Dropdown(id="tbl-filter-estado-col",
                                     options=[{"label":"Todos","value":""}] + [
                                         {"label":s,"value":s} for s in
-                                        ["PENDIENTE","DIAGNÓSTICO","EN APROBACIÓN","EN EJECUCIÓN","FINALIZADO","ENTREGADO","FACTURADO"]
+                                        ["PENDIENTE","DIAGNÓSTICO","EN APROBACIÓN","NO APROBADO",
+                                         "DE BAJA","EN IMPORTACIÓN","EN EJECUCIÓN","FINALIZADO","ENTREGADO","FACTURADO"]
                                     ],
                                     value="", clearable=False,
                                     style={"fontSize":"12px","minWidth":"130px"}),
@@ -1676,8 +1681,12 @@ def initial_data_load(login_success, n_intervals, already_loaded):
 
     tipos    = ["Todos"] + sorted(DF_BASE["TIPO DE ORDEN"].dropna().unique().tolist()) \
         if "TIPO DE ORDEN" in DF_BASE.columns else ["Todos"]
-    estados  = ["Todos"] + sorted(DF_BASE["ESTADO_ORDEN"].dropna().unique().tolist()) \
-        if "ESTADO_ORDEN" in DF_BASE.columns else ["Todos"]
+    _ORDEN_EST = ["PENDIENTE", "DIAGNÓSTICO", "EN APROBACIÓN", "NO APROBADO",
+                   "DE BAJA", "EN EJECUCIÓN", "FINALIZADO", "ENTREGADO", "FACTURADO"]
+    _presentes = set(DF_BASE["ESTADO_ORDEN"].dropna().unique().tolist()) \
+        if "ESTADO_ORDEN" in DF_BASE.columns else set()
+    _extras_est = [e for e in _presentes if e not in _ORDEN_EST]
+    estados  = ["Todos"] + [e for e in _ORDEN_EST if e in _presentes] + sorted(_extras_est)
     tecnicos = ["Todos"] + sorted(
         t for t in DF_BASE["TECNICO_PRINCIPAL"].dropna().unique()
         if t not in ("Nan", "nan")
@@ -1750,7 +1759,12 @@ def update_filters(n_intervals, n_clicks):
             print(f"[WARN] reload_data: {e}")
 
     tipos    = ["Todos"] + sorted(DF_BASE["TIPO DE ORDEN"].dropna().unique().tolist())         if "TIPO DE ORDEN" in DF_BASE.columns else ["Todos"]
-    estados  = ["Todos"] + sorted(DF_BASE["ESTADO_ORDEN"].dropna().unique().tolist())         if "ESTADO_ORDEN" in DF_BASE.columns else ["Todos"]
+    _ORDEN_EST = ["PENDIENTE", "DIAGNÓSTICO", "EN APROBACIÓN", "NO APROBADO",
+                   "DE BAJA", "EN EJECUCIÓN", "FINALIZADO", "ENTREGADO", "FACTURADO"]
+    _presentes = set(DF_BASE["ESTADO_ORDEN"].dropna().unique().tolist()) \
+        if "ESTADO_ORDEN" in DF_BASE.columns else set()
+    _extras_est = [e for e in _presentes if e not in _ORDEN_EST]
+    estados  = ["Todos"] + [e for e in _ORDEN_EST if e in _presentes] + sorted(_extras_est)
     tecnicos = ["Todos"] + sorted(
         t for t in DF_BASE["TECNICO_PRINCIPAL"].dropna().unique()
         if t not in ("Nan", "nan")
@@ -1782,6 +1796,9 @@ def update_kpis(tipo, estado, tecnico, cliente, start, end, *_):
     pend  = _count("PENDIENTE")
     diag  = _count("DIAGNÓSTICO")
     apro  = _count("EN APROBACIÓN")
+    noap  = _count("NO APROBADO")
+    baja  = _count("DE BAJA")
+    impo  = _count("EN IMPORTACIÓN")
     ejec  = _count("EN EJECUCIÓN")
     fin   = _count("FINALIZADO")
     entr  = _count("ENTREGADO")
@@ -1820,15 +1837,19 @@ def update_kpis(tipo, estado, tecnico, cliente, start, end, *_):
     else:
         iac_color, iac_icon = C["red"],    "🔴"
 
+    # Fila 1 — flujo completo: Total + 9 estados (mostrar solo si hay datos)
     top = [
-        kpi_card(n,    "Total Órdenes",  C["blue"],      "📋"),
-        kpi_card(pend, "Pendiente",      C["orange"],    "⏳"),
-        kpi_card(diag, "Diagnóstico",    C["teal"],      "🔍"),
-        kpi_card(apro, "En Aprobación",  C["yellow"],    "📝"),
-        kpi_card(ejec, "En Ejecución",   C["blue"],      "🔨"),
-        kpi_card(fin,  "Finalizado",     C["purple"],    "✔️"),
-        kpi_card(entr, "Entregado",      C["green"],     "📦"),
-        kpi_card(fact, "Facturado",      C["blue_dark"], "🧾"),
+        kpi_card(n,    "Total Órdenes",   C["blue"],      "📋"),
+        kpi_card(pend, "Pendiente",       C["orange"],    "⏳"),
+        kpi_card(diag, "Diagnóstico",     C["teal"],      "🔍"),
+        kpi_card(apro, "En Aprobación",   C["yellow"],    "📝"),
+        kpi_card(noap, "No Aprobado",     C["red"],       "🚫"),
+        kpi_card(baja, "De Baja",         C["gray"],      "🗑️"),
+        kpi_card(impo, "En Importación",  C["purple"],    "🚢"),
+        kpi_card(ejec, "En Ejecución",    C["blue"],      "🔨"),
+        kpi_card(fin,  "Finalizado",      C["purple"],    "✔️"),
+        kpi_card(entr, "Entregado",       C["green"],     "📦"),
+        kpi_card(fact, "Facturado",       C["blue_dark"], "🧾"),
     ]
     bottom = [
         kpi_card(f"{tasa}%",    "Tasa Completadas",      C["green"],   "✅"),
@@ -2261,7 +2282,9 @@ def update_tabla(tipo, estado, tecnico, cliente, start, end, *args):
         return html.Div("Sin datos", style={"color": C["gray"], "fontSize": "14px"})
 
     # Mostrar todos los estados, ordenados
-    orden_estado = {"PENDIENTE": 0, "DIAGNÓSTICO": 1, "EN APROBACIÓN": 2, "EN EJECUCIÓN": 3, "FINALIZADO": 4, "ENTREGADO": 5, "FACTURADO": 6}
+    orden_estado = {"PENDIENTE": 0, "DIAGNÓSTICO": 1, "EN APROBACIÓN": 2,
+                    "NO APROBADO": 3, "DE BAJA": 4, "EN IMPORTACIÓN": 5,
+                    "EN EJECUCIÓN": 6, "FINALIZADO": 7, "ENTREGADO": 8, "FACTURADO": 9}
     activas = dff.copy()
     activas["_ord"] = activas["ESTADO_ORDEN"].map(orden_estado).fillna(99)
     activas = activas.sort_values("_ord").drop(columns=["_ord"])
