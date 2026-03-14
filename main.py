@@ -575,13 +575,14 @@ body {{
     background: {C['surface']};
     border: 1px solid {C['border']};
     border-radius: 8px;
-    padding: 8px 10px;
+    padding: 7px 8px;
     box-shadow: 0 1px 4px rgba(0,0,0,0.07);
     transition: box-shadow 0.2s, transform 0.2s;
     min-width: 0;
+    overflow: hidden;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
 }}
 .kpi-card:hover {{
     box-shadow: 0 4px 12px rgba(0,0,0,0.12);
@@ -1015,21 +1016,25 @@ def kpi_card(value, label, color, icon, delta=None):
             "borderRadius": "2px",
         }),
         # Ícono
-        html.Span(icon, style={"fontSize": "16px", "lineHeight": "1"}),
+        html.Span(icon, style={"fontSize": "14px", "lineHeight": "1", "flexShrink": "0"}),
         # Textos
         html.Div([
             html.Div(str(value), style={
-                "fontSize":   "20px",
+                "fontSize":   "18px",
                 "fontWeight": "700",
                 "color":      C["text"],
                 "lineHeight": "1.1",
                 "whiteSpace": "nowrap",
+                "overflow":   "hidden",
+                "textOverflow": "ellipsis",
             }),
             html.Div(label, style={
-                "fontSize":   "10px",
+                "fontSize":   "9px",
                 "color":      C["text_dim"],
                 "fontWeight": "500",
                 "whiteSpace": "nowrap",
+                "overflow":   "hidden",
+                "textOverflow": "ellipsis",
                 "marginTop":  "2px",
             }),
         ]),
@@ -1336,19 +1341,21 @@ def build_layout():
                 # ── KPIs ──────────────────────────────────────────
                 section_header("Indicadores Clave"),
                 html.Div([
-                    # Fila 1: Total + 9 estados (auto-fit, mín 90 px)
+                    # Fila 1: Total + 10 estados — mismo ancho total que fila 2
                     html.Div(id="kpi-row-top", style={
                         "display":             "grid",
-                        "gridTemplateColumns": "repeat(auto-fill, minmax(90px, 1fr))",
+                        "gridTemplateColumns": "repeat(11, 1fr)",
                         "gap":                 "6px",
+                        "width":               "100%",
                     }),
-                    # Fila 2: 3 métricas de desempeño
+                    # Fila 2: 3 métricas de desempeño — mismo ancho
                     html.Div(id="kpi-row-bottom", style={
                         "display":             "grid",
                         "gridTemplateColumns": "repeat(3, 1fr)",
                         "gap":                 "6px",
+                        "width":               "100%",
                     }),
-                ], id="kpi-row", style={"display":"flex","flexDirection":"column","gap":"6px","marginBottom":"6px"}),
+                ], id="kpi-row", style={"display":"flex","flexDirection":"column","gap":"6px","marginBottom":"6px","width":"100%"}),
 
                 # ── Distribución ──────────────────────────────────
                 section_header("Distribución de Órdenes"),
@@ -3033,3 +3040,4 @@ server = app.server  # expuesto para gunicorn
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8050))
     app.run(host="0.0.0.0", port=port, debug=False)
+
